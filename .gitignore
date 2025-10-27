@@ -1,0 +1,11 @@
+# Settings
+/.vs/
+/.vscode/
+
+# Compiled code
+*.exe
+*.obj
+*.o
+
+# Others
+test.asm
