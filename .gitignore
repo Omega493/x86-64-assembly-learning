@@ -1,6 +1,8 @@
 # Settings
 /.vs/
 /.vscode/
+.ninja_log
+build.ninja
 
 # Compiled code
 *.exe
@@ -8,4 +10,4 @@
 *.o
 
 # Others
-test.asm
+test*.*
