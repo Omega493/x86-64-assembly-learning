@@ -26,7 +26,12 @@ Make sure the path's to your nasm and g++ installation are set as one of your sy
     ```powershell
     ./build <filename>.asm
     ```
-    where `<filename>` is the original filename of the assembly source code. For example, if the filename of the source code was `lorem_ipsum.asm`, the `<filename>` would've been replaced by `lorem_ipsum`. So, the complete command would've been `./build lorem_ipsum.asm`.
+    where `<filename>` is the original filename of the assembly source code. The build manager supports `.asm`, `.nasm`, and `.s` extensions. It will create a `build/` directory containing the artifacts.
+    
+    You can also use the optional flag `--move=true` to create the build folder in the parent directory:
+    ```powershell
+    ./build <filename>.asm --move=true
+    ```
 
 - To execute:
   - If you used only nasm and g++:
@@ -35,9 +40,9 @@ Make sure the path's to your nasm and g++ installation are set as one of your sy
     ```
   - If you used the custom build manager:
     ```powershell
-    ./<filename>.exe
+    ./build/<filename>/<filename>.exe
     ```
-    where `<filename>` is the original filename of the assembly source code. For example, if the filename of the source code was `lorem_ipsum.asm`, the `<filename>` would've been replaced by `lorem_ipsum`. So, the complete command would've been `./lorem_ipsum.exe`.
+    where `<filename>` is the name of your source file (without extension). The build manager creates a subdirectory inside `build/` matching the source name to keep artifacts isolated.
 
 - Some may set a return code. To access those, just use:
 ```powershell

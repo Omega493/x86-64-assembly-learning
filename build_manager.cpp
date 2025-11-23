@@ -21,72 +21,113 @@
 #include <string>
 #include <array>
 #include <filesystem>
+#include <stdexcept>
+#include <exception>
+#include <algorithm>
 #include <cstdlib>
-#include <vector>
+#include <cstdio>
+#include <cctype>
 
 namespace {
     const std::string ASSEMBLER{ "nasm" };
     const std::string ASSEMBLER_FLAGS{ "-f win64" };
     const std::string LINKER{ "g++" };
-}
 
-bool is_command_available(const std::string& cmd) {
-    std::string check_cmd = "where " + cmd + " > nul 2>&1";
-    int result = std::system(check_cmd.c_str());
-    return result == 0;
-}
+    bool is_command_available(const std::string& cmd) {
+        const std::string check_cmd{ "where " + cmd + " > nul 2>&1" };
+        const int result{ std::system(check_cmd.c_str()) };
+        return result == 0;
+    }
 
-void create_ninja(const std::string& source, const std::string& obj, const std::string& executable) {
-    std::ofstream ninja("build.ninja");
-    ninja.exceptions(std::ofstream::failbit | std::ofstream::badbit);
+    bool iequals(const std::string& a, const std::string& b) {
+        if (a.size() != b.size()) return false;
+        return std::equal(a.begin(), a.end(), b.begin(),
+            [](const unsigned char c1, const unsigned char c2) {
+                return std::tolower(c1) == std::tolower(c2);
+            }
+        );
+    }
 
-    ninja << "assembler = " << ASSEMBLER << '\n';
-    ninja << "assemblerFlags = " << ASSEMBLER_FLAGS << "\n\n";
-    ninja << "linker = " << LINKER << '\n';
+    std::string ninja_path(const std::filesystem::path& path) {
+        const std::string str{ path.generic_string() };
+        std::string result{};
+        result.reserve(str.size());
 
-    ninja << "rule assemble\n";
-    ninja << "  command = $assembler $assemblerFlags $in -o $out\n";
-    ninja << "  description = Building NASM object $out\n\n";
+        for (char c : str) {
+            if (c == ' ' || c == ':') {
+                result += '$';
+            }
+            result += c;
+        }
+        return result;
+    }
 
-    ninja << "rule link\n";
-    ninja << "  command = $linker $in -o $out\n";
-    ninja << "  description = Linking executable $out\n\n";
+    void create_ninja(const std::filesystem::path& source_path, const std::filesystem::path& obj_path, const std::filesystem::path& exe_path) {
+        std::ofstream ninja("build.ninja");
+        ninja.exceptions(std::ofstream::failbit | std::ofstream::badbit);
 
-    ninja << "build " << obj << ": assemble " << source << "\n";
-    ninja << "build " << executable << ": link " << obj << "\n\n";
+        ninja << "assembler = " << ASSEMBLER << '\n'
+            << "assemblerFlags = " << ASSEMBLER_FLAGS << "\n\n"
+            << "linker = " << LINKER << "\n\n"
+            << "rule assemble\n"
+            << "  command = $assembler $assemblerFlags $in -o $out\n"
+            << "  description = Building NASM object $desc\n\n"
+            << "rule link\n"
+            << "  command = $linker $in -o $out\n"
+            << "  description = Linking executable $desc\n\n";
 
-    ninja << "default " << executable << "\n";
-    
-    ninja.close(); 
+        const std::string ninja_source{ ninja_path(source_path) };
+        const std::string ninja_obj{ ninja_path(obj_path) };
+        const std::string ninja_exe{ ninja_path(exe_path) };
+
+        ninja << "build " << ninja_obj << ": assemble " << ninja_source << "\n"
+            << "  desc = " << obj_path.filename().string() << "\n\n"
+            << "build " << ninja_exe << ": link " << ninja_obj << "\n"
+            << "  desc = " << exe_path.filename().string() << "\n\n"
+            << "default " << ninja_exe << "\n";
+
+        ninja.close();
+    }
+
+    struct ProgramArgs {
+        std::filesystem::path source;
+        bool move_up{ false };
+    };
+
+    ProgramArgs parse_args(int argc, char* argv[]) {
+        if (argc < 2) throw std::runtime_error("Usage: build <filename>.asm [--move=true|false]");
+
+        ProgramArgs args;
+        args.source = std::filesystem::absolute(argv[1]);
+
+        for (int i{ 2 }; i < argc; ++i) {
+            const std::string arg{ argv[i] };
+            if (arg.find("--move=") == 0) {
+                const std::string val = arg.substr(7);
+                if (val == "true") args.move_up = true;
+                else if (val == "false") args.move_up = false;
+            }
+        }
+        return args;
+    }
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        std::cout << "Usage: build <filename>.asm" << std::endl;
-        return 1;
-    }
-
     try {
-        std::filesystem::path source(argv[1]);
+        const ProgramArgs args{ parse_args(argc, argv) };
 
-        if (!std::filesystem::exists(source)) {
-            std::cerr << "Error: Unable to find source file `" << source << "`" << std::endl;
+        if (!std::filesystem::exists(args.source)) {
+            std::cerr << "Error: Unable to find source file `" << args.source << '`' << std::endl;
             return 1;
         }
 
-        std::filesystem::path obj{ source };
-        obj.replace_extension(".obj");
-
-        std::filesystem::path executable{ source };
-        executable.replace_extension(".exe");
-
-        if (std::filesystem::exists(executable)) {
-            auto source_time = std::filesystem::last_write_time(source);
-            auto exe_time = std::filesystem::last_write_time(executable);
-
-            if (source_time <= exe_time) {
-                std::cout << "[BuildManager] No work to do." << std::endl;
-                return 0;
+        {
+            // Scoped bcs this particular name isn't used anywhere other than the following if block.
+            // So, we destroy it as soon as the check is complete.
+            const std::string ext{ args.source.extension().string() };
+            if (!iequals(ext, ".asm") && !iequals(ext, ".nasm") && !iequals(ext, ".s")) {
+                std::cerr << "Error: Invalid extension `" << ext << "`. Expected .asm, .nasm, or .s" << std::endl;
+                return 1;
             }
         }
 
@@ -97,12 +138,44 @@ int main(int argc, char* argv[]) {
             throw std::runtime_error("Linker '" + LINKER + "' not found in PATH.");
         }
 
-        std::cout << "[BuildManager] Configuring build for `" << source.filename() << "`\n";
-        
-        create_ninja(source.string(), obj.string(), executable.string());
+        std::filesystem::path source_dir{ args.source.parent_path() };
 
-        std::cout << "[BuildManager] Invoking ninja" << std::endl;
-        
+        std::filesystem::path build_root;
+        const std::string stem{ args.source.stem().string() };
+
+        if (args.move_up) {
+            if (source_dir.has_parent_path()) build_root = source_dir.parent_path() / "build";
+            else build_root = source_dir / "build";
+        }
+        else build_root = source_dir / "build";
+
+        std::filesystem::path artifact_dir{ build_root / stem };
+        std::filesystem::create_directories(artifact_dir);
+
+        std::filesystem::current_path(artifact_dir);
+
+        std::filesystem::path obj{ artifact_dir / (stem + ".obj") };
+        std::filesystem::path executable{ artifact_dir / (stem + ".exe") };
+
+        if (std::filesystem::exists(executable)) {
+            if (std::filesystem::last_write_time(args.source) <= std::filesystem::last_write_time(executable)) {
+                std::cout << "[BuildManager] No work to do." << std::endl;
+                return 0;
+            }
+        }
+
+        std::cout << "[BuildManager] Configuring build for " << args.source.filename().string() << "\n";
+
+        {
+            // Scoped bcs the paths here are unused anywhere other than the function invocation.
+            // So, we destroy them after the function call.
+            std::filesystem::path rel_source = std::filesystem::relative(args.source, artifact_dir);
+
+            create_ninja(rel_source, obj, executable);
+        }
+
+        std::cout << "[BuildManager] Invoking ninja" << '\n';
+
         _putenv_s("TERM", "dumb");
 
         FILE* pipe = _popen("ninja", "r");
@@ -118,29 +191,24 @@ int main(int argc, char* argv[]) {
 
             if (line.find("ninja: no work to do") != std::string::npos) {
                 std::cout << "[BuildManager] No work to do." << std::endl;
-                _pclose(pipe); 
+                _pclose(pipe);
                 return 0;
             }
-            
-            if (is_newline) {
-                std::cout << "  " << line;
-            } else {
-                std::cout << line;
-            }
 
-            if (!line.empty() && line.back() == '\n') {
-                is_newline = true;
-            } else {
-                is_newline = false;
-            }
+            if (is_newline) std::cout << "  " << line;
+            else std::cout << line;
+
+            if (!line.empty() && line.back() == '\n') is_newline = true;
+            else is_newline = false;
         }
 
-        int result{ _pclose(pipe) };
+        const int result{ _pclose(pipe) };
 
         if (result) {
             std::cerr << "[BuildManager] Build failed." << std::endl;
             return 1;
-        } else {
+        }
+        else {
             std::cout << "[BuildManager] Build complete." << std::endl;
             return 0;
         }
